@@ -19,6 +19,8 @@ package com.example.brian.appbarlayoutdemo.widget;
 import android.support.v4.view.ViewCompat;
 import android.view.View;
 
+import com.example.brian.appbarlayoutdemo.SysoutUtil;
+
 /**
  * Utility helper for moving a {@link android.view.View} around using
  * {@link android.view.View#offsetLeftAndRight(int)} and
@@ -61,6 +63,7 @@ class ViewOffsetHelper {
      * @return true if the offset has changed
      */
     public boolean setTopAndBottomOffset(int offset) {
+        SysoutUtil.sysout("setTopAndBottomOffset..." + offset + "/" + mOffsetTop);
         if (mOffsetTop != offset) {
             mOffsetTop = offset;
             updateOffsets();

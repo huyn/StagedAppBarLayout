@@ -17,8 +17,6 @@
 package com.example.brian.appbarlayoutdemo.widget;
 
 import android.content.Context;
-import android.support.design.widget.CoordinatorLayout;
-import android.support.design.widget.CoordinatorLayout.Behavior;
 import android.support.v4.math.MathUtils;
 import android.support.v4.view.ViewCompat;
 import android.util.AttributeSet;
@@ -90,7 +88,7 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
 
                 final int y = (int) ev.getY(pointerIndex);
                 final int yDiff = Math.abs(y - mLastMotionY);
-                if (yDiff > mTouchSlop) {
+                if (yDiff > mTouchSlop && !isScrollRunning()) {
                     mIsBeingDragged = true;
                     mLastMotionY = y;
                 }
@@ -147,7 +145,8 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
                 int dy = mLastMotionY - y;
 
                 if (!mIsBeingDragged && Math.abs(dy) > mTouchSlop) {
-                    mIsBeingDragged = true;
+                    if (!isScrollRunning())
+                        mIsBeingDragged = true;
                     if (dy > 0) {
                         dy -= mTouchSlop;
                     } else {
@@ -158,13 +157,13 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
                 if (mIsBeingDragged) {
                     mLastMotionY = y;
                     // We're being dragged so scroll the ABL
-                    scroll(parent, child, dy, getMaxDragOffset(child), 0);
+                    scroll(parent, child, dy, getMaxDragOffset(child), 0, 0, true);
                 }
                 break;
             }
 
             case MotionEvent.ACTION_UP:
-                if (mVelocityTracker != null) {
+                if (mVelocityTracker != null && !isScrollRunning()) {
                     mVelocityTracker.addMovement(ev);
                     mVelocityTracker.computeCurrentVelocity(1000);
                     float yvel = mVelocityTracker.getYVelocity(mActivePointerId);
@@ -189,13 +188,21 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
         return true;
     }
 
-    int setHeaderTopBottomOffset(CoordinatorLayout parent, V header, int newOffset) {
+    protected boolean isScrollRunning() {
+        return false;
+    }
+
+    protected boolean flingToPosition(V view, float velocityY) {
+        return false;
+    }
+
+    int setHeaderTopBottomOffset(CoordinatorLayout parent, V header, int newOffset, int touchType, boolean fromHeaderBehavior) {
         return setHeaderTopBottomOffset(parent, header, newOffset,
-                Integer.MIN_VALUE, Integer.MAX_VALUE);
+                Integer.MIN_VALUE, Integer.MAX_VALUE, touchType, fromHeaderBehavior);
     }
 
     int setHeaderTopBottomOffset(CoordinatorLayout parent, V header, int newOffset,
-                                 int minOffset, int maxOffset) {
+                                 int minOffset, int maxOffset, int touchType, boolean fromHeaderBehavior) {
         final int curOffset = getTopAndBottomOffset();
         int consumed = 0;
 
@@ -219,9 +226,10 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
     }
 
     final int scroll(CoordinatorLayout coordinatorLayout, V header,
-                     int dy, int minOffset, int maxOffset) {
+                     int dy, int minOffset, int maxOffset, int touchType, boolean fromHeaderBehavior) {
+        //SysoutUtil.sysout("+++++scroll");
         return setHeaderTopBottomOffset(coordinatorLayout, header,
-                getTopBottomOffsetForScrollingSibling() - dy, minOffset, maxOffset);
+                getTopBottomOffsetForScrollingSibling() - dy, minOffset, maxOffset, touchType, fromHeaderBehavior);
     }
 
     final boolean fling(CoordinatorLayout coordinatorLayout, V layout, int minOffset,
@@ -230,6 +238,10 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
             layout.removeCallbacks(mFlingRunnable);
             mFlingRunnable = null;
         }
+
+        if (flingToPosition(layout, velocityY))
+            return true;
+
 
         if (mScroller == null) {
             mScroller = new OverScroller(layout.getContext());
@@ -296,7 +308,7 @@ abstract class HeaderBehavior<V extends View> extends ViewOffsetBehavior<V> {
         public void run() {
             if (mLayout != null && mScroller != null) {
                 if (mScroller.computeScrollOffset()) {
-                    setHeaderTopBottomOffset(mParent, mLayout, mScroller.getCurrY());
+                    setHeaderTopBottomOffset(mParent, mLayout, mScroller.getCurrY(), 1, true);
                     // Post ourselves so that we run on the next animation
                     ViewCompat.postOnAnimation(mLayout, this);
                 } else {

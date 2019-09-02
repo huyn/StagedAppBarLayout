@@ -30,7 +30,6 @@ import android.support.annotation.RequiresApi;
 import android.support.annotation.RestrictTo;
 import android.support.annotation.VisibleForTesting;
 import android.support.design.R;
-import android.support.design.widget.CoordinatorLayout;
 import android.support.v4.math.MathUtils;
 import android.support.v4.util.ObjectsCompat;
 import android.support.v4.view.AbsSavedState;
@@ -39,13 +38,17 @@ import android.support.v4.view.WindowInsetsCompat;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 import android.widget.LinearLayout;
+
+import com.example.brian.appbarlayoutdemo.SysoutUtil;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 import static android.support.annotation.RestrictTo.Scope.LIBRARY_GROUP;
@@ -147,6 +150,7 @@ public class AppBarLayout extends LinearLayout {
     private boolean mCollapsed;
 
     private int[] mTmpStatesArray;
+    private int mToolbarHeight = 0;
 
     public AppBarLayout(Context context) {
         this(context, null);
@@ -201,6 +205,14 @@ public class AppBarLayout extends LinearLayout {
                         return onWindowInsetChanged(insets);
                     }
                 });
+    }
+
+    public void pinHeaderTopBottomOffset(int newOffset) {
+        final CoordinatorLayout.LayoutParams lp = (CoordinatorLayout.LayoutParams) getLayoutParams();
+        final CoordinatorLayout.Behavior viewBehavior = lp.getBehavior();
+        if (viewBehavior != null && viewBehavior instanceof HeaderBehavior) {
+            ((HeaderBehavior) viewBehavior).setHeaderTopBottomOffset((CoordinatorLayout) getParent(), this, newOffset, 0, false);
+        }
     }
 
     /**
@@ -385,7 +397,7 @@ public class AppBarLayout extends LinearLayout {
                 break;
             }
         }
-        return mTotalScrollRange = Math.max(0, range - getTopInset());
+        return mTotalScrollRange = Math.max(0, range - getTopInset()) - mToolbarHeight;
     }
 
     boolean hasScrollableChildren() {
@@ -815,6 +827,9 @@ public class AppBarLayout extends LinearLayout {
         private WeakReference<View> mLastNestedScrollingChildRef;
         private DragCallback mOnDragCallback;
 
+        //private boolean mWasNestedFlung;
+        private HashMap<Integer, Object> mRunningStateMap = new HashMap<>();
+
         public Behavior() {}
 
         public Behavior(Context context, AttributeSet attrs) {
@@ -826,6 +841,7 @@ public class AppBarLayout extends LinearLayout {
                                            View directTargetChild, View target, int nestedScrollAxes, int type) {
             // Return true if we're nested scrolling vertically, and we have scrollable children
             // and the scrolling view is big enough to scroll
+            SysoutUtil.sysout("+++AppBarLayoutTag...onStartNestedScroll..." + type);
             final boolean started = (nestedScrollAxes & ViewCompat.SCROLL_AXIS_VERTICAL) != 0
                     && child.hasScrollableChildren()
                     && parent.getHeight() - directTargetChild.getHeight() <= child.getHeight();
@@ -838,12 +854,16 @@ public class AppBarLayout extends LinearLayout {
             // A new nested scroll has started so clear out the previous ref
             mLastNestedScrollingChildRef = null;
 
+            stopFlingAnimator();
+
+            mRunningStateMap.put(type, null);
             return started;
         }
 
         @Override
         public void onNestedPreScroll(CoordinatorLayout coordinatorLayout, AppBarLayout child,
                                       View target, int dx, int dy, int[] consumed, int type) {
+            SysoutUtil.sysout("+++AppBarLayout...onNestedPreScroll...dy : " + dy + " type : " + type);
             if (dy != 0) {
                 int min, max;
                 if (dy < 0) {
@@ -856,7 +876,8 @@ public class AppBarLayout extends LinearLayout {
                     max = 0;
                 }
                 if (min != max) {
-                    consumed[1] = scroll(coordinatorLayout, child, dy, min, max);
+                    SysoutUtil.sysout("+++AppBarLayout...onNestedPreScroll...scroll");
+                    consumed[1] = scroll(coordinatorLayout, child, dy, min, max, type, false);
                 }
             }
         }
@@ -865,24 +886,144 @@ public class AppBarLayout extends LinearLayout {
         public void onNestedScroll(CoordinatorLayout coordinatorLayout, AppBarLayout child,
                                    View target, int dxConsumed, int dyConsumed, int dxUnconsumed, int dyUnconsumed,
                                    int type) {
+            SysoutUtil.sysout("+++AppBarLayout...onNestedScroll...dyUnconsumed : " + dyUnconsumed + " type : " + type);
             if (dyUnconsumed < 0) {
+                SysoutUtil.sysout("+++AppBarLayout...onNestedScroll...scroll");
                 // If the scrolling view is scrolling down but not consuming, it's probably be at
                 // the top of it's content
                 scroll(coordinatorLayout, child, dyUnconsumed,
-                        -child.getDownNestedScrollRange(), 0);
+                        -child.getDownNestedScrollRange(), 0, type, false);
             }
         }
 
+        private float velocityY = 0;
         @Override
         public void onStopNestedScroll(CoordinatorLayout coordinatorLayout, AppBarLayout abl,
                                        View target, int type) {
+            SysoutUtil.sysout("+++AppBarLayoutTag...onStopNestedScroll...type : " + type);
             if (type == ViewCompat.TYPE_TOUCH) {
                 // If we haven't been flung then let's see if the current view has been set to snap
                 snapToChildIfNeeded(coordinatorLayout, abl);
             }
+            /*if (!mWasNestedFlung) {
+                // If we haven't been flung then let's see if the current view has been set to snap
+                snapToChildIfNeeded(coordinatorLayout, abl);
+            }
+            mWasNestedFlung = false;*/
 
             // Keep a reference to the previous nested scrolling child
             mLastNestedScrollingChildRef = new WeakReference<>(target);
+
+            mRunningStateMap.remove(type);
+            if (type == 1)
+                return;
+            /*int anchor = -abl.getHeight()/2;
+            int start = getTopAndBottomOffset();
+
+            SysoutUtil.sysout("+++AppBarLayoutTag...onNestedFling..." + start + "/velocityY:" + velocityY);
+            if (start > anchor) {
+                if (velocityY == 0) {
+                    startFlingAnimator(abl, start, start < anchor / 2 ? 0 : anchor, velocityY);
+                } else {
+                    if (start > anchor/2) {
+                        if (velocityY > 2000)
+                            startFlingAnimator(abl, start, anchor, velocityY);
+                        else
+                            startFlingAnimator(abl, start, 0, 0);
+                    } else {
+                        if (velocityY < -2000)
+                            startFlingAnimator(abl, start, 0, velocityY);
+                        else
+                            startFlingAnimator(abl, start, anchor, 0);
+                    }
+                    //startFlingAnimator(abl, start, velocityY < 0 ? 0 : anchor, velocityY);
+                }
+            }*/
+            snapToPosition(abl, velocityY);
+            velocityY = 0;
+        }
+
+        private boolean snapToPosition(AppBarLayout abl, float velocityY) {
+            int anchor = -abl.getHeight()/2;
+            int start = getTopAndBottomOffset();
+
+            SysoutUtil.sysout("+++AppBarLayoutTag...onNestedFling..." + start + "/velocityY:" + velocityY);
+            if (start > anchor) {
+                if (velocityY == 0) {
+                    startFlingAnimator(abl, start, start < anchor / 2 ? 0 : anchor, velocityY);
+                } else {
+                    if (start > anchor/2) {
+                        if (velocityY > 2000)
+                            startFlingAnimator(abl, start, anchor, velocityY);
+                        else
+                            startFlingAnimator(abl, start, 0, 0);
+                    } else {
+                        if (velocityY < -2000)
+                            startFlingAnimator(abl, start, 0, velocityY);
+                        else
+                            startFlingAnimator(abl, start, anchor, 0);
+                    }
+                    //startFlingAnimator(abl, start, velocityY < 0 ? 0 : anchor, velocityY);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        protected boolean isScrollRunning() {
+            return !mRunningStateMap.isEmpty();
+        }
+
+        @Override
+        protected boolean flingToPosition(AppBarLayout abl, float velocityY) {
+            return snapToPosition(abl, -velocityY);
+        }
+
+        @Override
+        public boolean onNestedPreFling(@NonNull CoordinatorLayout coordinatorLayout, @NonNull AppBarLayout child, @NonNull View target, float velocityX, float velocityY) {
+            SysoutUtil.sysout("+++AppBarLayoutTag...onNestedPreFling");
+            return super.onNestedPreFling(coordinatorLayout, child, target, velocityX, velocityY);
+        }
+
+        @Override
+        public boolean onNestedFling(@NonNull CoordinatorLayout coordinatorLayout, @NonNull AppBarLayout child, @NonNull View target, float velocityX, float velocityY, boolean consumed) {
+            this.velocityY = velocityY;
+            return super.onNestedFling(coordinatorLayout, child, target, velocityX, velocityY, consumed);
+
+//            boolean flung = false;
+//
+//            /*if (!consumed) {
+//                // It has been consumed so let's fling ourselves
+//                flung = fling(coordinatorLayout, child, -child.getTotalScrollRange(),
+//                        0, -velocityY);
+//            } else {
+//                // If we're scrolling up and the child also consumed the fling. We'll fake scroll
+//                // up to our 'collapsed' offset
+//                if (velocityY < 0) {
+//                    // We're scrolling down
+//                    final int targetScroll = -child.getTotalScrollRange()
+//                            + child.getDownNestedPreScrollRange();
+//                    if (getTopBottomOffsetForScrollingSibling() < targetScroll) {
+//                        // If we're currently not expanded more than the target scroll, we'll
+//                        // animate a fling
+//                        animateOffsetTo(coordinatorLayout, child, targetScroll, velocityY);
+//                        flung = true;
+//                    }
+//                } else {
+//                    // We're scrolling up
+//                    final int targetScroll = -child.getUpNestedPreScrollRange();
+//                    if (getTopBottomOffsetForScrollingSibling() > targetScroll) {
+//                        // If we're currently not expanded less than the target scroll, we'll
+//                        // animate a fling
+//                        animateOffsetTo(coordinatorLayout, child, targetScroll, velocityY);
+//                        flung = true;
+//                    }
+//                }
+//            }
+//
+//            mWasNestedFlung = flung;*/
+//            return flung;
         }
 
         /**
@@ -894,9 +1035,56 @@ public class AppBarLayout extends LinearLayout {
             mOnDragCallback = callback;
         }
 
+        private ValueAnimator mFlingAnimator;
+        private boolean mFling = false;
+        private void startFlingAnimator(AppBarLayout ab, int start, int end, float velocity) {
+            if (mFlingAnimator == null) {
+                final int distance = Math.abs(getTopBottomOffsetForScrollingSibling() - end);
+
+                final int duration;
+                velocity = Math.abs(velocity);
+                if (velocity > 0) {
+                    duration = 1 * Math.round(1000 * (distance / velocity));
+                } else {
+                    final float distanceRatio = (float) distance / ab.getHeight();
+                    duration = (int) ((distanceRatio + 1) * 150);
+                }
+
+                mFlingAnimator = new ValueAnimator();
+                mFlingAnimator.setDuration(duration);
+                mFlingAnimator.setInterpolator(new DecelerateInterpolator());
+                mFlingAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                    @Override
+                    public void onAnimationUpdate(ValueAnimator animation) {
+                        int value = (int) animation.getAnimatedValue();
+                        setTopAndBottomOffset(value);
+                    }
+                });
+            } else {
+                if (mFlingAnimator.isRunning()) {
+                    mFlingAnimator.cancel();
+                }
+            }
+            mFling = true;
+            mFlingAnimator.setIntValues(start, end);
+            mFlingAnimator.start();
+        }
+
+        private void stopFlingAnimator() {
+            mFling = false;
+            if (mFlingAnimator != null) {
+                if (mFlingAnimator.isRunning()) {
+                    mFlingAnimator.cancel();
+                }
+                mFlingAnimator = null;
+            }
+        }
+
         private void animateOffsetTo(final CoordinatorLayout coordinatorLayout,
                 final AppBarLayout child, final int offset, float velocity) {
-            final int distance = Math.abs(getTopBottomOffsetForScrollingSibling() - offset);
+            int height = child.getHeight();
+            int targetOffset = (offset == -height ? offset+child.mToolbarHeight : offset);
+            final int distance = Math.abs(getTopBottomOffsetForScrollingSibling() - targetOffset);
 
             final int duration;
             velocity = Math.abs(velocity);
@@ -922,12 +1110,12 @@ public class AppBarLayout extends LinearLayout {
 
             if (mOffsetAnimator == null) {
                 mOffsetAnimator = new ValueAnimator();
-                mOffsetAnimator.setInterpolator(AnimationUtils.DECELERATE_INTERPOLATOR);
+                mOffsetAnimator.setInterpolator(new DecelerateInterpolator());
                 mOffsetAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
                     @Override
                     public void onAnimationUpdate(ValueAnimator animation) {
                         setHeaderTopBottomOffset(coordinatorLayout, child,
-                                (int) animation.getAnimatedValue());
+                                (int) animation.getAnimatedValue(), 1, false);
                     }
                 });
             } else {
@@ -950,6 +1138,7 @@ public class AppBarLayout extends LinearLayout {
         }
 
         private void snapToChildIfNeeded(CoordinatorLayout coordinatorLayout, AppBarLayout abl) {
+            SysoutUtil.sysout("+++AppBarLayout...snapToChildIfNeeded");
             final int offset = getTopBottomOffsetForScrollingSibling();
             final int offsetChildIndex = getChildIndexOnOffset(abl, offset);
             if (offsetChildIndex >= 0) {
@@ -982,11 +1171,13 @@ public class AppBarLayout extends LinearLayout {
                         }
                     }
 
-                    final int newOffset = offset < (snapBottom + snapTop) / 2
+                    /*final int newOffset = offset < (snapBottom + snapTop) / 2
                             ? snapBottom
-                            : snapTop;
+                            : snapTop;*/
+                    int newOffset = (snapBottom + snapTop)/2;
                     animateOffsetTo(coordinatorLayout, abl,
                             MathUtils.clamp(newOffset, -abl.getTotalScrollRange(), 0), 0);
+                    SysoutUtil.sysout("+++AppBarLayout...snapToChildIfNeeded___executed..." + newOffset);
                 }
             }
         }
@@ -1034,7 +1225,7 @@ public class AppBarLayout extends LinearLayout {
                 } else {
                     offset += Math.round(child.getHeight() * mOffsetToChildIndexOnLayoutPerc);
                 }
-                setHeaderTopBottomOffset(parent, abl, offset);
+                setHeaderTopBottomOffset(parent, abl, offset, 0, false);
             } else if (pendingAction != PENDING_ACTION_NONE) {
                 final boolean animate = (pendingAction & PENDING_ACTION_ANIMATE_ENABLED) != 0;
                 if ((pendingAction & PENDING_ACTION_COLLAPSED) != 0) {
@@ -1042,13 +1233,13 @@ public class AppBarLayout extends LinearLayout {
                     if (animate) {
                         animateOffsetTo(parent, abl, offset, 0);
                     } else {
-                        setHeaderTopBottomOffset(parent, abl, offset);
+                        setHeaderTopBottomOffset(parent, abl, offset, 0, false);
                     }
                 } else if ((pendingAction & PENDING_ACTION_EXPANDED) != 0) {
                     if (animate) {
                         animateOffsetTo(parent, abl, 0, 0);
                     } else {
-                        setHeaderTopBottomOffset(parent, abl, 0);
+                        setHeaderTopBottomOffset(parent, abl, 0, 0, false);
                     }
                 }
             }
@@ -1095,6 +1286,7 @@ public class AppBarLayout extends LinearLayout {
         @Override
         void onFlingFinished(CoordinatorLayout parent, AppBarLayout layout) {
             // At the end of a manual fling, check to see if we need to snap to the edge-child
+            SysoutUtil.sysout("+++AppBarLayout...onFlingFinished");
             snapToChildIfNeeded(parent, layout);
         }
 
@@ -1110,7 +1302,7 @@ public class AppBarLayout extends LinearLayout {
 
         @Override
         int setHeaderTopBottomOffset(CoordinatorLayout coordinatorLayout,
-                AppBarLayout appBarLayout, int newOffset, int minOffset, int maxOffset) {
+                AppBarLayout appBarLayout, int newOffset, int minOffset, int maxOffset, int touchType, boolean fromHeaderBehavior) {
             final int curOffset = getTopBottomOffsetForScrollingSibling();
             int consumed = 0;
 
@@ -1123,12 +1315,34 @@ public class AppBarLayout extends LinearLayout {
                             ? interpolateOffset(appBarLayout, newOffset)
                             : newOffset;
 
-                    final boolean offsetChanged = setTopAndBottomOffset(interpolatedOffset);
-
                     // Update how much dy we have consumed
                     consumed = curOffset - newOffset;
                     // Update the stored sibling offset
                     mOffsetDelta = newOffset - interpolatedOffset;
+                    if (mFling && !fromHeaderBehavior)
+                        return consumed;
+
+                    SysoutUtil.sysout("\nsetHeaderTopBottomOffset+++++++++++++++++++++++++++++++++++++++++++++\n");
+                    SysoutUtil.sysout("setHeaderTopBottomOffset+++++curOffset:" + curOffset + "/newOffset:" + newOffset);
+                    SysoutUtil.sysout("setHeaderTopBottomOffset+++++getTopAndBottomOffset:" + getTopAndBottomOffset() + "/" + getTopBottomOffsetForScrollingSibling() + "/" + appBarLayout.getHeight());
+
+                    int type = 1;
+                    int anchor = - appBarLayout.getHeight() / 2;
+                    boolean offsetChanged = false;
+                    SysoutUtil.sysout("setHeaderTopBottomOffset+++++anchor : " + anchor + " / interpolatedOffset : " + interpolatedOffset + " / touchType : " + touchType);
+                    if (anchor > interpolatedOffset || touchType != 1) {
+                        offsetChanged = setTopAndBottomOffset(interpolatedOffset);
+                    } else if (anchor < interpolatedOffset && touchType == 1 && getTopAndBottomOffset() > anchor) {
+                        offsetChanged = setTopAndBottomOffset(interpolatedOffset);
+                        type = 2;
+                    } else {
+                        offsetChanged = setTopAndBottomOffset(anchor);
+                        type = 3;
+                    }
+                    SysoutUtil.sysout("setHeaderTopBottomOffset+++++getTopAndBottomOffset:  interpolatedOffset : " + interpolatedOffset + "****" + type);
+
+                    //final boolean offsetChanged = setTopAndBottomOffset(interpolatedOffset);
+                    SysoutUtil.sysout("setHeaderTopBottomOffset+++++offsetChanged..." + offsetChanged);
 
                     if (!offsetChanged && appBarLayout.hasChildWithInterpolator()) {
                         // If the offset hasn't changed and we're using an interpolated scroll

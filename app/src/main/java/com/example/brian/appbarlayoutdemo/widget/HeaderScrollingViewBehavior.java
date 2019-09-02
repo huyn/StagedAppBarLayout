@@ -18,8 +18,6 @@ package com.example.brian.appbarlayoutdemo.widget;
 
 import android.content.Context;
 import android.graphics.Rect;
-import android.support.design.widget.CoordinatorLayout;
-import android.support.design.widget.CoordinatorLayout.Behavior;
 import android.support.v4.math.MathUtils;
 import android.support.v4.view.GravityCompat;
 import android.support.v4.view.ViewCompat;
